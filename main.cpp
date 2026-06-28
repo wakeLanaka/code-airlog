@@ -1,12 +1,12 @@
-#include <QGuiApplication>
+#include <QApplication>
 #include <QQmlApplicationEngine>
-#include <QCursor>
 
 int main(int argc, char* argv[])
 {
-    QGuiApplication app(argc, argv);
-    QQmlApplicationEngine engine("qrc:/Hardware/Sensors/main.qml");
-    QGuiApplication::setOverrideCursor(QCursor(Qt::BlankCursor));
+    QApplication app(argc, argv);
+    QQmlApplicationEngine engine;
 
-    return QGuiApplication::exec();
+    engine.load(QStringLiteral("qrc:/Airlog/Main.qml"));
+
+    return app.exec();
 }
