@@ -5,7 +5,8 @@
 #include <fcntl.h>
 #include <iostream>
 #include <sys/ioctl.h>
-#include <QDebug>
+#include <QSqlError>
+#include <QSqlQuery>
 
 #define SCD41_ADDR 0x62
 
@@ -42,6 +43,29 @@ TemperatureSensor::TemperatureSensor(QObject* parent) : QObject(parent)
             readTemperature();
         }
     });
+
+    if (!QSqlDatabase::contains("EnvironmentData"))
+    {
+        m_database = QSqlDatabase::addDatabase("QPSQL", "EnvironmentData");
+        m_database.setHostName("192.168.1.203");
+        m_database.setPort(5433);
+        m_database.setDatabaseName("airlog_db");
+        m_database.setUserName("TODO");
+        m_database.setPassword("TODO");
+
+        if (!m_database.open())
+        {
+            qCritical() << "Database connection failed:" << m_database.lastError().text();
+        }
+    }
+
+    QTimer::singleShot(900000, this, [this]()
+    {
+        m_writeDatabaseTimer = new QTimer(this);
+        connect(m_writeDatabaseTimer, &QTimer::timeout, this,
+                &TemperatureSensor::insertDataToDatabase);
+        m_writeDatabaseTimer->start(900000);
+    });
 }
 
 TemperatureSensor::~TemperatureSensor()
@@ -51,6 +75,12 @@ TemperatureSensor::~TemperatureSensor()
         constexpr unsigned char stopPeriodicMeasurement[2] = {0x3F, 0x86};
         write(m_i2cFileDescriptor, stopPeriodicMeasurement, 2);
         close(m_i2cFileDescriptor);
+    }
+
+    if (m_database.isOpen())
+    {
+        m_database.close();
+        QSqlDatabase::removeDatabase("EnvironmentData");
     }
 }
 
@@ -94,31 +124,28 @@ void TemperatureSensor::readTemperature()
 
     if (ioctl(m_i2cFileDescriptor, I2C_RDWR, &msgset) >= 0)
     {
-        const uint16_t rawCo2 = (buffer[0] << 8) | buffer[1];
         const uint16_t rawTemperature = (buffer[3] << 8) | buffer[4];
+        const uint16_t rawCo2 = (buffer[0] << 8) | buffer[1];
         const uint16_t rawHumidity = (buffer[6] << 8) | buffer[7];
 
-        const double co2 = rawCo2;
         const double celsius = -45.0 + 175.0 * (static_cast<double>(rawTemperature) / 65536.0);
+        const double co2 = rawCo2;
         const double humidity = 100.0 * (static_cast<double>(rawHumidity) / 65536.0f);
 
-        if (celsius > -40.0 && celsius < 85.0)
+        if (!qFuzzyCompare(m_currentTemperature, celsius))
         {
-            if (!qFuzzyCompare(m_currentTemperature, celsius))
-            {
-                m_currentTemperature = celsius;
-                emit temperatureChanged(m_currentTemperature);
-            }
-            if (!qFuzzyCompare(m_currentHumidity, humidity))
-            {
-                m_currentHumidity = humidity;
-                emit humidityChanged(m_currentHumidity);
-            }
-            if (!qFuzzyCompare(m_currentCo2, co2))
-            {
-                m_currentCo2 = co2;
-                emit co2Changed(m_currentCo2);
-            }
+            m_currentTemperature = celsius;
+            emit temperatureChanged(m_currentTemperature);
+        }
+        if (!qFuzzyCompare(m_currentCo2, co2))
+        {
+            m_currentCo2 = co2;
+            emit co2Changed(m_currentCo2);
+        }
+        if (!qFuzzyCompare(m_currentHumidity, humidity))
+        {
+            m_currentHumidity = humidity;
+            emit humidityChanged(m_currentHumidity);
         }
     }
 }
@@ -149,4 +176,18 @@ bool TemperatureSensor::isDataReady() const
         return (status & 0x07FF) != 0;
     }
     return false;
+}
+
+void TemperatureSensor::insertDataToDatabase() const
+{
+    QSqlQuery query{m_database};
+    query.prepare("INSERT INTO metrics (temperature, co2, humidity) VALUES (:temperature, :co2, :humidity)");
+    query.bindValue(":temperature", m_currentTemperature);
+    query.bindValue(":co2", m_currentCo2);
+    query.bindValue(":humidity", m_currentHumidity);
+
+    if (!query.exec())
+    {
+        qWarning() << "Could not write to database:" << query.lastError().text();
+    }
 }

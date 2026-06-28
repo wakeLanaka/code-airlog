@@ -1,6 +1,7 @@
 #ifndef AIRLOG_TEMPERATURESENSOR_H
 #define AIRLOG_TEMPERATURESENSOR_H
 #include <qqmlintegration.h>
+#include <QSqlDatabase>
 #include <QTimer>
 
 
@@ -26,6 +27,7 @@ signals:
 
 private slots:
     void readTemperature();
+    void insertDataToDatabase() const;
 
 private:
     [[nodiscard]] bool isDataReady() const;
@@ -35,6 +37,8 @@ private:
     double m_currentHumidity{};
     int m_i2cFileDescriptor = -1;
     QTimer* m_readTimer;
+    QTimer* m_writeDatabaseTimer;
+    QSqlDatabase m_database;
 };
 
 #endif
